@@ -1,0 +1,101 @@
+name: 打包 APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # KataGo 编译很慢，结果缓存起来；脚本不变就不用重新编译
+      - name: 缓存 KataGo 编译结果
+        id: kgcache
+        uses: actions/cache@v4
+        with:
+          path: build-native/out
+          key: katago-android-${{ hashFiles('scripts/build_katago.sh') }}
+
+      - name: 编译 KataGo（Android arm64）
+        if: steps.kgcache.outputs.cache-hit != 'true'
+        run: bash scripts/build_katago.sh
+
+      - name: 放入编译好的引擎
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp build-native/out/*.so app/src/main/jniLibs/arm64-v8a/
+          ls -la app/src/main/jniLibs/arm64-v8a
+
+      - name: 缓存模型
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/models
+          key: models-${{ hashFiles('scripts/fetch_models.sh') }}
+
+      - name: 下载模型
+        run: bash scripts/fetch_models.sh
+
+      # 固定签名：第一次自动生成，之后一直复用，新版才能直接覆盖安装。
+      # 优先用仓库 Secrets 里的 SIGNING_KEYSTORE_B64 / SIGNING_PASS（最稳）；没有就用缓存里的。
+      - name: 恢复签名文件
+        uses: actions/cache@v4
+        with:
+          path: signing
+          key: signing-v1
+
+      - name: 准备签名
+        env:
+          KS_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.SIGNING_PASS }}
+        run: |
+          mkdir -p signing
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > signing/gocoach.jks
+            echo "$KS_PASS" > signing/pass
+          elif [ ! -f signing/gocoach.jks ]; then
+            openssl rand -hex 16 > signing/pass
+            keytool -genkeypair -keystore signing/gocoach.jks -storepass "$(cat signing/pass)" -keypass "$(cat signing/pass)" \
+              -alias gocoach -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=GoCoach"
+            echo "::notice::已生成新的签名文件（缓存保存）。"
+          fi
+          echo "SIGN_STORE=$PWD/signing/gocoach.jks" >> "$GITHUB_ENV"
+          echo "SIGN_PASS=$(cat signing/pass)" >> "$GITHUB_ENV"
+          echo "::add-mask::$(cat signing/pass)"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: 打包 APK
+        run: gradle --no-daemon assembleRelease -PbuildNo=${{ github.run_number }}
+
+      - name: 整理文件
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/go-coach-1.0.${{ github.run_number }}.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-coach-apk
+          path: dist/*.apk
+
+      - name: 发布（方便手机直接下载）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v1.0.${{ github.run_number }}" dist/*.apk \
+            --title "九路陪练 1.0.${{ github.run_number }}" \
+            --notes "自动打包。下载 apk 后在手机上安装即可，新版可以直接覆盖安装。"

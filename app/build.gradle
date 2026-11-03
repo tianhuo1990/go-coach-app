@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+def buildNo = (project.findProperty('buildNo') ?: '1') as Integer
+
+android {
+    namespace 'cn.gocoach.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'cn.gocoach.app'
+        minSdk 26
+        targetSdk 34
+        versionCode buildNo
+        versionName "1.0.${buildNo}"
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    // 固定签名：每次打包的签名一样，新版可以直接覆盖安装，数据不会丢
+    signingConfigs {
+        // 签名文件和密码由打包环境提供（GitHub Actions 自动生成并保存），不放在代码里
+        fixed {
+            storeFile file(System.getenv('SIGN_STORE') ?: '../signing/gocoach.jks')
+            storePassword System.getenv('SIGN_PASS') ?: ''
+            keyAlias 'gocoach'
+            keyPassword System.getenv('SIGN_PASS') ?: ''
+        }
+    }
+
+    buildTypes {
+        debug { signingConfig signingConfigs.fixed }
+        release {
+            signingConfig signingConfigs.fixed
+            minifyEnabled false
+        }
+    }
+
+    packaging {
+        // 引擎是可执行文件，必须解压到手机上才能运行
+        jniLibs { useLegacyPackaging true }
+    }
+
+    androidResources {
+        noCompress 'gz'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

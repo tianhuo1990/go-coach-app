@@ -1,0 +1,10 @@
+build/
+.gradle/
+build-native/
+app/build/
+app/src/main/jniLibs/
+app/src/main/assets/models/
+local.properties
+*.apk
+signing/
+keystore/

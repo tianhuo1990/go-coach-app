@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>九路陪练</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>九路陪练</h1>
+    <div class="meta">
+      <span id="modeLine">人机</span>
+      <span id="status">轮到你</span>
+    </div>
+  </header>
+
+  <div class="engine-bar" id="engineBar" hidden></div>
+
+  <div id="cards" class="cards"></div>
+
+  <div class="board-box">
+    <svg id="board" viewBox="0 0 100 100" aria-label="棋盘"></svg>
+  </div>
+  <div class="eval" id="eval"></div>
+
+  <div class="bar">
+    <button id="btnWhy" class="primary">为什么？</button>
+    <button id="btnUndo">悔棋</button>
+    <button id="btnPass">停一手</button>
+    <button id="btnResign">认输</button>
+    <button id="btnMenu" class="ghost">菜单</button>
+  </div>
+</div>
+
+<!-- 问老师：不遮住棋盘的底部面板 -->
+<div id="chat" class="sheet light" hidden>
+  <div class="sheet-body">
+    <div class="panel-head"><b>问老师</b><button class="x" data-close="chat">收起</button></div>
+    <div id="msgs" class="msgs"></div>
+    <div class="row">
+      <input id="ask" placeholder="比如：这里为什么不能断？">
+      <button id="btnAsk" class="primary">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 菜单 -->
+<div id="menu" class="sheet" hidden>
+  <div class="sheet-body">
+    <div class="panel-head"><b>菜单</b><button class="x" data-close="menu">关闭</button></div>
+    <div class="grid2">
+      <button id="mNew" class="primary">新的一局</button>
+      <button id="mTerms">术语本</button>
+      <button id="mStats">我的战绩</button>
+      <button id="mTts">朗读：关</button>
+    </div>
+
+    <h3>下一局</h3>
+    <label>对局方式
+      <select id="sMode">
+        <option value="ai">人机：我和 AI 老师下</option>
+        <option value="pvp">双人：两个人轮流下（老师点评双方）</option>
+      </select>
+    </label>
+    <label>棋盘
+      <select id="sSize">
+        <option value="9">9 路（入门，一盘约 10 分钟）</option>
+        <option value="13">13 路（进阶）</option>
+        <option value="19">19 路（正式）</option>
+      </select>
+    </label>
+    <label>让子
+      <select id="sHcp"></select>
+    </label>
+    <label id="lvlWrap">对手水平
+      <select id="sLevel"></select>
+    </label>
+    <span class="hint" id="lvlHint"></span>
+
+    <h3>引擎</h3>
+    <div class="engine-info" id="engineInfo">—</div>
+    <label>每手计算量（越大越准，也越慢）
+      <select id="sVisits">
+        <option value="30">快</option>
+        <option value="60">标准</option>
+        <option value="150">准</option>
+      </select>
+    </label>
+    <div class="grid2">
+      <button id="mGpu">重试 GPU</button>
+      <button id="mCpu">改用 CPU</button>
+    </div>
+
+    <h3>老师（大模型接口）</h3>
+    <label>接口地址<input id="sBase" autocomplete="off"></label>
+    <label>API Key<input id="sKey" type="password" autocomplete="off"></label>
+    <label>模型名<input id="sModel" autocomplete="off"></label>
+    <span class="hint">断网时老师只会给出固定短句，下棋和引擎不受影响。</span>
+    <button id="mSave" class="primary">保存</button>
+  </div>
+</div>
+
+<!-- 术语本 / 战绩 -->
+<div id="book" class="sheet" hidden>
+  <div class="sheet-body">
+    <div class="panel-head"><b id="bookTitle">术语本</b><button class="x" data-close="book">关闭</button></div>
+    <div id="bookBody"></div>
+  </div>
+</div>
+
+<!-- 终局 -->
+<div id="result" class="sheet" hidden>
+  <div class="sheet-body">
+    <div class="panel-head"><b>本局结束</b><button class="x" data-close="result">关闭</button></div>
+    <div id="resultBody"></div>
+    <button id="rNew" class="primary">再来一局</button>
+  </div>
+</div>
+
+<script src="rules.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
