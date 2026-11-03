@@ -187,6 +187,14 @@ function classify(before, after, p, c) {
 }
 
 // ---------- 老师（大模型） ----------
+// 模型偶尔不按 JSON 回答，或在 JSON 外面包一层文字/代码块：尽量解析，实在不行就当纯文字
+function parseLoose(txt) {
+  const t = String(txt || "").trim();
+  try { return JSON.parse(t); } catch (e) {}
+  const m = t.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch (e) {} }
+  return { text: t.replace(/^```\w*|```$/g, "").trim(), cards: [] };
+}
 async function callLLM(messages, json) {
   let url = (cfg.base || DEF.base).trim().replace(/\/+$/, "");
   if (!/\/chat\/completions$/.test(url)) url += "/chat/completions";
@@ -248,7 +256,7 @@ ${cardList.map((c, i) => `【卡${i + 1}】\n${moveFactsText(c)}`).join("\n\n")}
 返回 JSON：{"cards":[{"term":"","newTerm":"","reason":"","effect":"","advice":""}，按卡的顺序，共 ${cardList.length} 张],"hints":[{"pos":"坐标","color":"B或W","n":序号}]}
 hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个，可以为空数组。`;
   try {
-    const out = JSON.parse(await callLLM([{ role: "system", content: sysPrompt() }, { role: "user", content: user }], true));
+    const out = parseLoose(await callLLM([{ role: "system", content: sysPrompt() }, { role: "user", content: user }], true));
     (out.cards || []).forEach((oc, i) => {
       const c = cardList[i]; if (!c) return;
       c.term = clean(oc.term).slice(0, 6) || "落子";
@@ -632,9 +640,10 @@ async function ask(q, focusCard) {
   const sys = sysPrompt() + `\n现在学生在提问。返回 JSON：{"text":"回答","hints":[{"pos":"坐标","color":"B或W","n":序号}]}。
 text 用大白话，150 字以内，可以讲具体变化（这时可以说出坐标），讲变化时把每一步放进 hints（最多 6 步，按顺序编号），棋盘会用半透明棋子演示。`;
   try {
-    const out = JSON.parse(await callLLM([{ role: "system", content: sys }, ...chatLog.slice(-6), { role: "user", content: ctx + "\n\n学生问：" + q }], true));
-    const text = clean(out.text);
-    chatLog.push({ role: "user", content: q }, { role: "assistant", content: text });
+    const out = parseLoose(await callLLM([{ role: "system", content: sys }, ...chatLog.slice(-6), { role: "user", content: ctx + "\n\n学生问：" + q + "\n（记得按 JSON 格式回答）" }], true));
+    const text = clean(out.text || out.answer || out.reply || "");
+    if (!text) throw new Error("老师没有回答内容");
+    chatLog.push({ role: "user", content: q }, { role: "assistant", content: JSON.stringify({ text, hints: [] }) });
     addMsg("a", text);
     const hs = (out.hints || []).slice(0, 6).map(h => ({ p: go.parse(h.pos), c: h.color === "W" ? W : B, n: h.n })).filter(h => h.p != null && h.p >= 0 && st.board[h.p] === EMPTY);
     if (hs.length) setHints(hs);
