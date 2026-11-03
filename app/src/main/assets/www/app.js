@@ -254,7 +254,7 @@ function recentRecord() {
   return s.map((m, i) => `${off + i + 1}.${m[0] === "B" ? "黑" : "白"}${m[1]}`).join(" ");
 }
 
-async function teach(cardList) {
+async function teach(cardList, opts = {}) {
   const e = epoch;
   if (!cfg.key) { cardList.forEach(fallbackText); render(); return; }
   const terms = Object.keys(store.get("terms", {}));
@@ -285,7 +285,7 @@ hints 的 n 是演示顺序，从 1 开始；hints 是建议里想在棋盘上�
   }
   st.notes = [...st.notes, ...cardList.map(c => `${WHO(c.color)}${c.pos}【${c.term}】${c.effect || c.reason || ""}`)].slice(-6);
   render();
-  speakCards(cardList);
+  if (!opts.silent) speakCards(cardList);
   saveGame();
 }
 // 统一称呼：人机里黑=你、白=我；双人里黑方/白方
@@ -484,12 +484,15 @@ function renderStatus() {
   $("btnResign").disabled = busy || st.over;
 }
 
+let timing = { eng: null, llm: null };
+const fmtS = ms => ms == null ? "—" : (ms / 1000).toFixed(1) + "s";
 function renderEval() {
   if (st.lastWr == null) { $("eval").innerHTML = ""; return; }
   const wr = st.lastWr, lead = st.lastLead;
   const lbl = st.mode === "ai" ? `你的胜率 ${Math.round(wr * 100)}%` : `黑 ${Math.round(wr * 100)}% : 白 ${100 - Math.round(wr * 100)}%`;
   const ld = lead >= 0 ? `黑领先 ${lead.toFixed(1)} 目` : `白领先 ${(-lead).toFixed(1)} 目`;
-  $("eval").innerHTML = `<span>${lbl}</span><span class="bar-wr"><i style="width:${Math.round(wr * 100)}%"></i></span><span>${ld}</span>`;
+  const tm = timing.eng != null || timing.llm != null ? `<span class="tm">引擎 ${fmtS(timing.eng)} · 老师 ${fmtS(timing.llm)}</span>` : "";
+  $("eval").innerHTML = `<span>${lbl}</span><span class="bar-wr"><i style="width:${Math.round(wr * 100)}%"></i></span><span>${ld}</span>${tm}`;
 }
 
 function render() { renderBoard(); renderCards(); renderStatus(); renderEval(); }
@@ -523,6 +526,7 @@ function setEval(a) { if (a) { st.lastWr = a.wr; st.lastLead = a.lead; renderEva
 
 async function onPoint(p) {
   if (busy || st.over) return;
+  if (hasNative()) { try { window.Native.stopSpeak(); } catch (e) {} }
   if (st.mode === "ai" && st.toMove !== B) return;
   const color = st.toMove;
   const r = apply(color, p);
@@ -557,9 +561,12 @@ function countTier(card) {
 // 人机：引擎落子 + 两张招式卡
 async function aiReply(myCard, e) {
   let after;
+  const t0 = performance.now();
+  timing = { eng: null, llm: null };
   try {
     const seq = st.seq.slice();
     const res = await Promise.all([analyzePos(seq.slice(0, -1)), analyzePos(seq)]);
+    timing.eng = performance.now() - t0;
     if (e !== epoch) return;
     const before = res[0]; after = res[1];
     if (myCard.p >= 0 || myCard.pos === "pass") { myCard.cls = classify(before, after, myCard.p, B); countTier(myCard); }
@@ -591,15 +598,20 @@ async function aiReply(myCard, e) {
   } catch (err) { /* 引擎慢或出错：仍然让老师讲 */ }
   if (e !== epoch) return;
 
-  const talk = teach(myCard.pos === "pass" ? [aiCard] : [myCard, aiCard]);
-  await Promise.race([talk, sleep(20000)]);
+  // 两张卡分开同时请求：你那张短、回来得快，回来就落子；我那张随后补上
+  const t1 = performance.now();
+  const talkMine = myCard.pos === "pass" ? Promise.resolve() : teach([myCard]);
+  const talkAi = teach([aiCard], { silent: true });   // 我的子落下后再读
+  await Promise.race([talkMine, sleep(20000)]);
+  timing.llm = performance.now() - t1;
   if (e !== epoch) return;
-  if (myCard.pos !== "pass") await sleep(1200);     // 留一点时间看你的招式卡
+  if (myCard.pos !== "pass") await sleep(600);      // 留一点时间看你的招式卡
   if (e !== epoch) return;
 
   st.viewBoard = null;
   aiCard.fresh = true;
   cards.unshift(aiCard);
+  talkAi.then(() => { if (e === epoch) speakCards([aiCard]); });
   if (aiAfter) setEval(aiAfter);
   busy = false;
   render();

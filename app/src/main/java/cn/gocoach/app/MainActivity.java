@@ -140,7 +140,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean speak(String text) {
             if (!ttsReady || tts == null) return false;
-            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "gc");
+            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "gc");   // 两张卡依次读，新的一手开始时由网页调用 stopSpeak 清空
             return true;
         }
 

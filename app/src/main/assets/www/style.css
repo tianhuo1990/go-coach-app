@@ -137,3 +137,5 @@ label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4
 
 /* 卡片贴着棋盘往上排 */
 .cards > :first-child{margin-top:auto}
+
+.eval .tm{font-size:11px;opacity:.75}
