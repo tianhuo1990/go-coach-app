@@ -48,6 +48,43 @@ public class Engine {
     private final Map<String, Pending> pending = new HashMap<>();
     private final List<Runnable> waiting = new ArrayList<>();
     private int generation = 0;
+    private final StringBuilder gpuLog = new StringBuilder();
+
+    private static final String[] CL_DIRS = {"/vendor/lib64", "/system/vendor/lib64", "/odm/lib64", "/system/lib64",
+            "/vendor/lib64/egl", "/system/vendor/lib64/egl", "/vendor/lib64/hw"};
+    private static final String[] CL_NAMES = {"libOpenCL.so", "libGLES_mali.so", "libmali.so", "libOpenCL_system.so"};
+
+    private void glog(String s) {
+        synchronized (gpuLog) {
+            gpuLog.append(s).append('\n');
+            if (gpuLog.length() > 6000) gpuLog.delete(0, gpuLog.length() - 6000);
+        }
+    }
+
+    /** 找手机上的 OpenCL 库；名字不是 libOpenCL.so 的，在 App 目录里建一个同名链接。返回要加进库路径的目录。 */
+    private String prepareOpenCl() {
+        String found = null;
+        for (String d : CL_DIRS) for (String n : CL_NAMES) {
+            File f = new File(d, n);
+            if (f.exists()) {
+                glog("找到 " + f.getAbsolutePath() + (f.canRead() ? "" : "（不可读）"));
+                if (found == null) found = f.getAbsolutePath();
+            }
+        }
+        if (found == null) { glog("手机上没找到任何 OpenCL 库"); return ""; }
+        try {
+            File dir = new File(ctx.getFilesDir(), "cl");
+            dir.mkdirs();
+            File link = new File(dir, "libOpenCL.so");
+            link.delete();
+            android.system.Os.symlink(found, link.getAbsolutePath());
+            glog("使用 " + found);
+            return dir.getAbsolutePath() + ":";
+        } catch (Exception e) {
+            glog("建立链接失败：" + e.getMessage());
+            return "";
+        }
+    }
 
     private static class Pending {
         int need;
@@ -67,6 +104,7 @@ public class Engine {
             o.put("ready", ready);
             o.put("backend", backend);
             o.put("text", status);
+            o.put("gpuLog", prefs.getString("gpuLog", ""));
             return o.toString();
         } catch (Exception e) { return "{}"; }
     }
@@ -187,7 +225,14 @@ public class Engine {
             cmd.add("-human-model"); cmd.add(new File(modelDir(), "human.bin").getAbsolutePath());
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(ctx.getFilesDir());
-            String libPath = "/vendor/lib64:/system/vendor/lib64:/odm/lib64:/system/lib64:" + nativeDir();
+            String extra = "";
+            if (gpu) {
+                synchronized (gpuLog) { gpuLog.setLength(0); }
+                glog("手机：" + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + "，安卓 " + android.os.Build.VERSION.RELEASE
+                        + "，芯片 " + android.os.Build.HARDWARE);
+                extra = prepareOpenCl();
+            }
+            String libPath = extra + "/vendor/lib64:/system/vendor/lib64:/odm/lib64:/system/lib64:/vendor/lib64/egl:" + nativeDir();
             pb.environment().put("LD_LIBRARY_PATH", libPath);
             pb.environment().put("HOME", ctx.getFilesDir().getAbsolutePath());
             setStatus(gpu ? "正在启动 GPU 引擎…" : "正在启动 CPU 引擎…");
@@ -211,6 +256,7 @@ public class Engine {
                 String line;
                 while ((line = r.readLine()) != null) {
                     Log.i(TAG, "stderr: " + line);
+                    if (gpu) glog(line);
                     if (line.contains("ready to begin handling requests")) {
                         synchronized (readyLock) { result[0] = true; result[1] = true; readyLock.notifyAll(); }
                     } else if (!ready) {
@@ -234,6 +280,10 @@ public class Engine {
             }
         }
         if (!result[1] || !p.isAlive()) {
+            if (gpu) {
+                try { glog("进程退出码：" + (p.isAlive() ? "仍在运行（超时）" : String.valueOf(p.exitValue()))); } catch (Exception ignored) {}
+                saveGpuLog("启动失败");
+            }
             p.destroy();
             setStatus(gpu ? "GPU 引擎用不了，改用 CPU…" : "CPU 引擎启动失败");
             return false;
@@ -241,11 +291,13 @@ public class Engine {
 
         // GPU 能启动不代表能算对：做一次小测试
         if (gpu && !selfTest(gen)) {
+            saveGpuLog("自检没通过（结果不对或超时）");
             p.destroy();
             setStatus("GPU 测试没通过，改用 CPU…");
             return false;
         }
 
+        if (gpu) saveGpuLog("GPU 正常");
         backend = gpu ? "GPU" : "CPU";
         List<Runnable> run;
         synchronized (lock) {
@@ -256,6 +308,12 @@ public class Engine {
         setStatus("引擎就绪（" + backend + "）");
         for (Runnable r : run) r.run();
         return true;
+    }
+
+    private void saveGpuLog(String verdict) {
+        String t;
+        synchronized (gpuLog) { t = "结论：" + verdict + "\n" + gpuLog; }
+        prefs.edit().putString("gpuLog", t).apply();
     }
 
     private boolean selfTest(int gen) {

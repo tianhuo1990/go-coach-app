@@ -1,4 +1,4 @@
-// ===== 九路陪练 App 主逻辑 =====
+// ===== 围棋教练 App 主逻辑 =====
 "use strict";
 const $ = id => document.getElementById(id);
 const store = {
@@ -735,6 +735,22 @@ $("sMode").onchange = fillLevel;
 $("mSave").onclick = () => { readMenu(); $("menu").hidden = true; showMsg("已保存。点“新的一局”让棋盘、模式、让子生效。"); };
 $("mNew").onclick = () => { readMenu(); $("menu").hidden = true; $("result").hidden = true; startGame(null); };
 $("rNew").onclick = () => { $("result").hidden = true; startGame(null); };
+$("mDiag").onclick = () => {
+  let log = "";
+  try { log = JSON.parse(window.Native.engineStatus()).gpuLog || ""; } catch (e) {}
+  $("menu").hidden = true;
+  $("bookTitle").textContent = "GPU 诊断信息";
+  $("bookBody").innerHTML = `<div class="hint">截图发给开发者即可。点"重试 GPU"后会生成新的记录。</div>
+    <pre id="diagText" style="white-space:pre-wrap;word-break:break-all;font-size:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;margin:0">${esc(log || "还没有记录。点菜单里的「重试 GPU」，等一会儿再来看。")}</pre>
+    <button id="diagCopy">复制</button>`;
+  $("book").hidden = false;
+  $("diagCopy").onclick = () => {
+    const t = $("diagText").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => showMsg("已复制")).catch(() => {
+      const r = document.createRange(); r.selectNodeContents($("diagText")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    });
+  };
+};
 $("mTerms").onclick = () => { $("menu").hidden = true; showTerms(); };
 $("mStats").onclick = () => { $("menu").hidden = true; showStats(); };
 $("mTts").onclick = () => { cfg.tts = !cfg.tts; saveCfg(); $("mTts").textContent = "朗读：" + (cfg.tts ? "开" : "关"); if (!cfg.tts && hasNative()) try { window.Native.stopSpeak(); } catch (e) {} };
