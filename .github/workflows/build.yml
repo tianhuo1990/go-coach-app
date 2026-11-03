@@ -97,5 +97,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v1.0.${{ github.run_number }}" dist/*.apk \
-            --title "九路陪练 1.0.${{ github.run_number }}" \
+            --title "围棋教练 1.0.${{ github.run_number }}" \
             --notes "自动打包。下载 apk 后在手机上安装即可，新版可以直接覆盖安装。"
