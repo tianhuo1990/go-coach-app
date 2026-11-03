@@ -376,11 +376,12 @@ function renderBoard() {
   }
   for (const [x, y] of go.hoshi()) h += `<circle cx="${c(x)}" cy="${c(y)}" r="${N <= 9 ? .9 : .6}" fill="var(--grid)"/>`;
   const r = step * .47;
+  const bd = st.viewBoard || st.board, lastP = st.viewBoard ? st.viewLast : st.last;
   for (let p = 0; p < N * N; p++) {
-    const x = c(p % N), y = c((p / N) | 0), v = st.board[p];
+    const x = c(p % N), y = c((p / N) | 0), v = bd[p];
     if (v) {
       h += `<circle cx="${x}" cy="${y}" r="${r}" fill="${v === B ? "#1d1b19" : "#f7f4ee"}" stroke="${v === B ? "#000" : "#8a8070"}" stroke-width=".25"/>`;
-      if (p === st.last) h += `<circle cx="${x}" cy="${y}" r="${step * .18}" fill="none" stroke="${v === B ? "#f7f4ee" : "#1d1b19"}" stroke-width="${N <= 9 ? .6 : .4}"/>`;
+      if (p === lastP) h += `<circle cx="${x}" cy="${y}" r="${step * .18}" fill="none" stroke="${v === B ? "#f7f4ee" : "#1d1b19"}" stroke-width="${N <= 9 ? .6 : .4}"/>`;
     }
   }
   for (const t of hints) {
@@ -403,15 +404,29 @@ const linkCoords = s => esc(s).replace(/\b([A-HJ-T])(1[0-9]|[1-9])\b/g, (m) => g
 function renderCards() {
   const box = $("cards");
   // 最新的卡放在最下面，紧挨着棋盘
-  const shown = cards.slice(0, 3);
+  const shown = cards.slice(0, 6);
+  const fullN = st.mode === "ai" ? 2 : 1;
+  let fullLeft = fullN;
   box.innerHTML = shown.map((c, i) => {
     const t = TIERS[c.cls ? c.cls.tier : "plain"];
+    const isMsg = c.p === -2;
+    const full = !isMsg && fullLeft > 0 && (fullLeft--, true);
+    if (isMsg) return `<div class="msg-line ${c.fresh ? "flash" : ""}">${linkCoords(c.effect)}</div>`;
+    if (!full) {
+      const one = c.effect || c.reason || c.advice || "";
+      return `<div class="card mini ${t.card}" data-id="${c.id}">
+        <span class="who ${c.color === B ? "b" : "w"}">${WHO(c.color)}</span>
+        <span class="skill-s">${c.done ? "【" + esc(c.term) + "】" : "……"}</span><span class="pos">${c.pos === "pass" ? "停" : c.pos}</span>
+        ${t.name ? `<span class="tier ${t.cls}">${t.name}</span>` : ""}
+        <span class="one">${esc(one)}</span>
+      </div>`;
+    }
     const lines = c.done
       ? [["原因", c.reason], ["作用", c.effect], ["建议", c.advice]].filter(x => x[1]).map(x => `<div><b>${x[0]}</b>${linkCoords(x[1])}</div>`).join("")
       : `<div class="wait">${c.cls ? "老师在想怎么讲…" : "引擎在看这手…"}</div>`;
     const facts = c.cls ? `${c.cls.lossPts >= 0.05 ? "亏" : c.cls.lossPts <= -0.05 ? "赚" : "差不多"} ${Math.abs(c.cls.lossPts).toFixed(1)} 目 · 胜率 ${Math.round(c.cls.myWrAfter * 100)}%` : "";
     const canSolve = c.cls && c.cls.idx !== 0 && c.cls.best && c.cls.best !== "pass";
-    return `<div class="card ${t.card} ${i > 1 ? "old" : ""} ${c.fresh ? "flash" : ""}" data-id="${c.id}">
+    return `<div class="card ${t.card} ${c.fresh ? "flash" : ""}" data-id="${c.id}">
       <div class="card-head">
         <span class="who ${c.color === B ? "b" : "w"}">${WHO(c.color)}</span>
         <span class="skill ${c.done ? "" : "pending"}">${c.done ? "【" + esc(c.term) + "】" : "……"}</span>
@@ -420,8 +435,8 @@ function renderCards() {
         ${t.name ? `<span class="tier ${t.cls}">${t.name}</span>` : ""}
       </div>
       <div class="lines">${lines}</div>
-      ${facts ? `<div class="facts">${facts}${c.netErr ? " · 老师离线" : ""}</div>` : ""}
-      ${canSolve || (c.done && c.p >= -1) ? `<div class="actions">${canSolve ? `<button data-solve="${c.id}">看正解</button>` : ""}${c.p >= -1 ? `<button data-ask="${c.id}">问这手</button>` : ""}</div>` : ""}
+      <div class="foot">${facts ? `<span class="facts">${facts}${c.netErr ? " · 老师离线" : ""}</span>` : ""}
+        ${canSolve ? `<button data-solve="${c.id}">看正解</button>` : ""}${c.done ? `<button data-ask="${c.id}">问这手</button>` : ""}</div>
     </div>`;
   }).reverse().join("");
   box.scrollTop = box.scrollHeight;
@@ -433,7 +448,8 @@ function renderStatus() {
   $("modeLine").textContent = st.mode === "ai" ? `${st.N} 路 · 人机 · 对手 ${lv}${st.hcp ? ` · 让 ${st.hcp} 子` : ""}` : `${st.N} 路 · 双人对局${st.hcp ? ` · 让 ${st.hcp} 子` : ""}`;
   let s;
   if (st.over) s = "已终局";
-  else if (busy) s = "老师在下…";
+  else if (st.viewBoard) s = "老师在讲解…";
+  else if (busy) s = "老师在想…";
   else if (st.mode === "ai") s = st.toMove === B ? "轮到你（黑）" : "老师（白）";
   else s = st.toMove === B ? "轮到黑方" : "轮到白方";
   $("status").textContent = `${s} · 提子 黑${st.caps[1]} 白${st.caps[2]}`;
@@ -452,6 +468,10 @@ function renderEval() {
 
 function render() { renderBoard(); renderCards(); renderStatus(); renderEval(); }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function makeCard(color, p, local) {
+  return { id: ++cardSeq, color, p, pos: go.name(p), moveNo: st.seq.length, local, cls: null, done: false, fresh: true, term: "" };
+}
 function newCard(color, p, local) {
   const c = { id: ++cardSeq, color, p, pos: go.name(p), moveNo: st.seq.length, local, cls: null, done: false, fresh: true, term: "" };
   cards.unshift(c);
@@ -523,20 +543,33 @@ async function aiReply(myCard, e) {
   const p = sampleHuman(after);
   const r = apply(W, p);
   if (!r.ok) { busy = false; render(); return; }
-  const aiCard = newCard(W, p, go.localFacts(r.before, st.board, p, W, r.captured, LABEL()));
+  // 先讲完你这一手，再把老师的子放到棋盘上：落子已经算好，但暂时不显示
+  const aiCard = makeCard(W, p, go.localFacts(r.before, st.board, p, W, r.captured, LABEL()));
+  st.viewBoard = r.before; st.viewLast = myCard.p;
+  render();
+
+  let aiAfter = null;
+  try {
+    aiAfter = await analyzePos(st.seq.slice());
+    if (e !== epoch) return;
+    if (p >= 0) aiCard.cls = classify(after, aiAfter, p, W);
+  } catch (err) { /* 引擎慢或出错：仍然让老师讲 */ }
+  if (e !== epoch) return;
+
+  const talk = teach(myCard.pos === "pass" ? [aiCard] : [myCard, aiCard]);
+  await Promise.race([talk, sleep(20000)]);
+  if (e !== epoch) return;
+  if (myCard.pos !== "pass") await sleep(1200);     // 留一点时间看你的招式卡
+  if (e !== epoch) return;
+
+  st.viewBoard = null;
+  aiCard.fresh = true;
+  cards.unshift(aiCard);
+  if (aiAfter) setEval(aiAfter);
   busy = false;
   render();
   saveGame();
   if (st.passes >= 2) return finishGame("双方都停了一手");
-
-  try {
-    const aiAfter = await analyzePos(st.seq.slice());
-    if (e !== epoch) return;
-    if (p >= 0) { aiCard.cls = classify(after, aiAfter, p, W); }
-    setEval(aiAfter);
-    renderCards();
-  } catch (err) { /* 引擎慢或出错：仍然让老师讲 */ }
-  await teach(myCard.pos === "pass" ? [aiCard] : [myCard, aiCard]);
 }
 
 // 让子局 / 双人轮到 AI 先下
@@ -599,7 +632,7 @@ function startGame(fromSave) {
   epoch++; busy = false; cache.clear(); hints = []; cards = [];
   if (fromSave) {
     go = makeGo(fromSave.N);
-    st = Object.assign(newState(fromSave.mode, fromSave.N, fromSave.hcp), fromSave, { snaps: [] });
+    st = Object.assign(newState(fromSave.mode, fromSave.N, fromSave.hcp), fromSave, { snaps: [], viewBoard: null });
     cards = (fromSave.cards || []).map(c => Object.assign(c, { fresh: false }));
     cardSeq = cards.reduce((m, c) => Math.max(m, c.id), 0);
   } else {
