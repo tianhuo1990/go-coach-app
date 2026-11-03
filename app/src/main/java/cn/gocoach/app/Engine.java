@@ -32,7 +32,7 @@ public class Engine {
     public interface StatusListener { void status(String s); }
 
     private static final String TAG = "GoCoachEngine";
-    private static final String[] MODELS = {"main.txt.gz", "human.bin.gz"};
+    private static final String[] MODELS = {"main.txt", "human.bin"};
 
     private final Context ctx;
     private final SharedPreferences prefs;
@@ -89,7 +89,7 @@ public class Engine {
                 if (!launch(false)) setStatus("引擎启动失败，请重启 App 再试");
             } catch (Exception e) {
                 Log.e(TAG, "start", e);
-                setStatus("引擎启动失败：" + e.getMessage());
+                setStatus("引擎启动失败：" + e.getClass().getSimpleName() + " " + e.getMessage());
             }
         }, "engine-start").start();
     }
@@ -183,8 +183,8 @@ public class Engine {
             cmd.add(bin.getAbsolutePath());
             cmd.add("analysis");
             cmd.add("-config"); cmd.add(cfg.getAbsolutePath());
-            cmd.add("-model"); cmd.add(new File(modelDir(), "main.txt.gz").getAbsolutePath());
-            cmd.add("-human-model"); cmd.add(new File(modelDir(), "human.bin.gz").getAbsolutePath());
+            cmd.add("-model"); cmd.add(new File(modelDir(), "main.txt").getAbsolutePath());
+            cmd.add("-human-model"); cmd.add(new File(modelDir(), "human.bin").getAbsolutePath());
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(ctx.getFilesDir());
             String libPath = "/vendor/lib64:/system/vendor/lib64:/odm/lib64:/system/lib64:" + nativeDir();

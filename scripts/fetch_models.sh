@@ -21,11 +21,16 @@ get() {  # get <输出文件> <最小字节数> <地址...>
   echo "所有地址都下载失败：$out"; exit 1
 }
 
-get "$DEST/main.txt.gz" 10000000 \
+[ -f "$DEST/main.txt" ] || get "$DEST/main.txt.gz" 10000000 \
   "https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b10c128-s1141046784-d204142634.txt.gz" \
   "https://huggingface.co/salty-flower/weiqi-models/resolve/main/kata1-b10c128.txt.gz"
 
-get "$DEST/human.bin.gz" 90000000 \
+[ -f "$DEST/human.bin" ] || get "$DEST/human.bin.gz" 90000000 \
   "https://github.com/lightvector/KataGo/releases/download/v1.15.0/b18c384nbt-humanv0.bin.gz"
 
+# 安卓打包工具会自动解压 .gz 资源并去掉扩展名，这里先自己解压好，文件名就固定了
+for f in main.txt human.bin; do
+  if [ ! -f "$DEST/$f" ]; then gunzip -c "$DEST/$f.gz" > "$DEST/$f.part" && mv "$DEST/$f.part" "$DEST/$f"; fi
+done
+rm -f "$DEST"/*.gz
 ls -la "$DEST"
