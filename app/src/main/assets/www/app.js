@@ -265,8 +265,8 @@ ${(() => { const l = go.stoneList(st.board); return `黑子：${l.b.join(" ") ||
 要写招式卡的棋：
 ${cardList.map((c, i) => `【卡${i + 1}】\n${moveFactsText(c)}`).join("\n\n")}
 
-返回 JSON：{"cards":[{"term":"","newTerm":"","reason":"","effect":"","advice":""}，按卡的顺序，共 ${cardList.length} 张],"hints":[{"pos":"坐标","color":"B或W","n":序号}]}
-hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个，可以为空数组。`;
+返回 JSON：{"cards":[{"term":"","newTerm":"","reason":"","effect":"","advice":""}，按卡的顺序，共 ${cardList.length} 张],"hints":[{"pos":"坐标","color":"B或W","n":1}]}
+hints 的 n 是演示顺序，从 1 开始；hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个，可以为空数组。`;
   try {
     const out = parseLoose(await callLLM([{ role: "system", content: sysPrompt() }, { role: "user", content: user }], true));
     (out.cards || []).forEach((oc, i) => {
@@ -279,7 +279,7 @@ hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个�
       c.done = true;
     });
     cardList.forEach(c => { if (!c.done) fallbackText(c); });
-    if (e === epoch && Array.isArray(out.hints) && out.hints.length) setHints(out.hints.slice(0, 3).map(h => ({ p: go.parse(h.pos), c: h.color === "W" ? W : B, n: h.n })).filter(h => h.p != null && h.p >= 0 && st.board[h.p] === EMPTY));
+    if (e === epoch) { const hs = normHints(out.hints, 3); if (hs.length) setHints(hs); }
   } catch (err) {
     cardList.forEach(c => { fallbackText(c); c.netErr = err.message; });
   }
@@ -288,7 +288,21 @@ hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个�
   speakCards(cardList);
   saveGame();
 }
-const clean = s => String(s || "").replace(/[黑白]棋/g, m => st.mode === "ai" ? (m === "黑棋" ? "你的棋" : "我的棋") : (m === "黑棋" ? "黑方" : "白方")).trim();
+// 统一称呼：人机里黑=你、白=我；双人里黑方/白方
+const clean = s => String(s || "")
+  .replace(/([黑白])(棋|方|子)/g, (m, c) => st.mode === "ai" ? (c === "黑" ? "你的棋" : "我的棋") : (c === "黑" ? "黑方" : "白方"))
+  .replace(/([黑白])(?=[一二两三四五六七八九十\d]+(颗|个)?子)/g, (m, c) => st.mode === "ai" ? (c === "黑" ? "你的" : "我的") : (c === "黑" ? "黑方" : "白方"))
+  .trim();
+
+// 演示棋子：只保留空点，按步骤顺序重新编号成 1、2、3…
+function normHints(list, max) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list.map((h, i) => ({ p: go.parse(h && h.pos), c: h && h.color === "W" ? W : B, k: Number(h && h.n) || (i + 1) }))
+    .filter(h => h.p != null && h.p >= 0 && st.board[h.p] === EMPTY && !seen.has(h.p) && seen.add(h.p))
+    .sort((a, b) => a.k - b.k).slice(0, max)
+    .map((h, i) => ({ p: h.p, c: h.c, n: i + 1 }));
+}
 
 function fallbackText(c) {
   c.done = true;
@@ -692,14 +706,14 @@ async function ask(q, focusCard) {
   const ctx = `棋盘（x=黑 o=白，大写为最后一手）：\n${go.boardText(st.board, st.last)}\n棋谱（最近）：${recentRecord()}\n老师最近说过：${st.notes.join("；")}`
     + (focusCard ? `\n学生问的是这一手：\n${moveFactsText(focusCard)}` : "");
   const sys = sysPrompt() + `\n现在学生在提问。返回 JSON：{"text":"回答","hints":[{"pos":"坐标","color":"B或W","n":序号}]}。
-text 用大白话，150 字以内，可以讲具体变化（这时可以说出坐标），讲变化时把每一步放进 hints（最多 6 步，按顺序编号），棋盘会用半透明棋子演示。`;
+text 用大白话，150 字以内，可以讲具体变化（这时可以说出坐标），讲变化时把每一步放进 hints（最多 6 步，n 从 1 开始按顺序编号），棋盘会用半透明棋子演示。`;
   try {
     const out = parseLoose(await callLLM([{ role: "system", content: sys }, ...chatLog.slice(-6), { role: "user", content: ctx + "\n\n学生问：" + q + "\n（记得按 JSON 格式回答）" }], true));
     const text = clean(out.text || out.answer || out.reply || "");
     if (!text) throw new Error("老师没有回答内容");
     chatLog.push({ role: "user", content: q }, { role: "assistant", content: JSON.stringify({ text, hints: [] }) });
     addMsg("a", text);
-    const hs = (out.hints || []).slice(0, 6).map(h => ({ p: go.parse(h.pos), c: h.color === "W" ? W : B, n: h.n })).filter(h => h.p != null && h.p >= 0 && st.board[h.p] === EMPTY);
+    const hs = normHints(out.hints, 6);
     if (hs.length) setHints(hs);
     speak(text);
   } catch (err) { addMsg("a", "老师连不上：" + err.message); }
