@@ -56,6 +56,7 @@ COMMON=(
   -DANDROID_STL=c++_static
   -DCMAKE_BUILD_TYPE=Release
   -DNO_GIT_REVISION=1
+  -DCMAKE_CXX_FLAGS="-include endian.h"   # bionic 的 sys/types.h 不带字节序定义
   -DZLIB_INCLUDE_DIR="$SYSROOT/usr/include"
   -DZLIB_LIBRARY="$SYSROOT/usr/lib/aarch64-linux-android/$API/libz.so"
 )
@@ -63,7 +64,7 @@ COMMON=(
 # 4) CPU 版
 cmake -S katago/cpp -B build-eigen "${COMMON[@]}" \
   -DUSE_BACKEND=EIGEN -DEIGEN3_INCLUDE_DIRS="$WORK/eigen"
-cmake --build build-eigen --target katago -j"$(nproc)"
+cmake --build build-eigen --target katago -j"$(nproc)" -- -k
 cp build-eigen/katago "$OUT/libkatago_eigen.so"
 
 # 5) GPU 版
@@ -71,7 +72,7 @@ cmake -S katago/cpp -B build-cl "${COMMON[@]}" \
   -DUSE_BACKEND=OPENCL \
   -DOpenCL_INCLUDE_DIR="$WORK/OpenCL-Headers" \
   -DOpenCL_LIBRARY="$WORK/clstub/libOpenCL.so"
-cmake --build build-cl --target katago -j"$(nproc)"
+cmake --build build-cl --target katago -j"$(nproc)" -- -k
 cp build-cl/katago "$OUT/libkatago_cl.so"
 
 "$LLVM/bin/llvm-strip" "$OUT"/*.so
