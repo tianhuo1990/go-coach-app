@@ -198,7 +198,7 @@ function parseLoose(txt) {
 async function callLLM(messages, json) {
   let url = (cfg.base || DEF.base).trim().replace(/\/+$/, "");
   if (!/\/chat\/completions$/.test(url)) url += "/chat/completions";
-  const body = JSON.stringify({ model: cfg.model, messages, temperature: 0.6, ...(json ? { response_format: { type: "json_object" } } : {}) });
+  const body = JSON.stringify({ model: cfg.model, messages, temperature: 0.3, ...(json ? { response_format: { type: "json_object" } } : {}) });
   const r = await httpPost(url, { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.key }, body);
   if (r.status >= 400) throw new Error("接口返回 " + r.status);
   const j = JSON.parse(r.text);
@@ -209,30 +209,42 @@ const TERM_LIST = "打吃、提、长、立、爬、挡、扳、断、粘、虎�
 
 function sysPrompt() {
   const who = st.mode === "ai"
-    ? "你是围棋教练，正在和学生下棋。学生执黑（x），你执白（o）。对学生说话时，黑棋叫\"你\"，白棋叫\"我\"。"
-    : "你是围棋教练，正在旁边观看两位学生对局，同时点评黑方（x）和白方（o）。称呼用\"黑方\"\"白方\"。";
+    ? "你是围棋教练，在和学生下指导棋。学生执黑，你执白。说话时黑棋叫\"你\"，白棋叫\"我\"。"
+    : "你是围棋教练，在旁边看两位学生对局。称呼\"黑方\"\"白方\"。";
   return `${who}
-棋盘 ${st.N} 路。学生水平约 ${rankName(st.rank)}。
-你的输出是"招式卡"，必须是 JSON。规则：
-1. 只依据给你的棋盘和事实说话。气数、打吃、提子、胜率、亏损这些都是程序算好的，照用即可，不要自己另算。
-2. term 是这手棋的招式名，用一个常见围棋术语（如：${TERM_LIST}），最多 4 个字。实在说不出就写"落子"。
-3. reason（原因）/effect（作用）/advice（建议）各一句大白话，每句不超过 22 个字，不说废话，不重复坐标。
-   普通的一手只写 effect；好棋重点写 effect；坏棋重点写 reason 和 advice（advice 给方向，不要直接说最佳点坐标）。
-4. 术语要保留。如果 term 不在"学生已学过的术语"里，newTerm 写一句不超过 20 字的大白话解释，否则 newTerm 留空。
-5. 语气轻松，不挖苦。`;
+${st.N} 路棋盘，学生水平约${rankName(st.rank)}。坐标：字母是列，A 在最左；数字是行，1 在最下面。
+
+你的任务是写"招式卡"，把程序给的事实翻译成大白话。最重要的规则：
+1. 只说事实里写到的东西。事实里没写的棋子、气数、死活、吃子、切断、目数，一律不说，也不要自己推算。
+2. 位置只用事实里的方位词（如"右下角""3 线"），不要自己判断方位。
+3. term 直接用事实里"招式名"那一项；没有给招式名时，再从常见术语里选一个最贴切的（${TERM_LIST}）。
+4. reason / effect / advice 每句不超过 20 个字，说人话，不说空话套话：
+   - 好棋：effect 说它具体起了什么作用（来自事实）。
+   - 坏棋：reason 说亏在哪里（依据"引擎认为更好的是…"推断方向，例如"该先补自己的棋"），advice 给方向，不说坐标。
+   - 普通的一手：只写 effect，其余留空。
+   - 我（老师）的棋：effect 说我的打算，可参考"引擎预计的后续"。
+5. 如果 term 不在"学生已学过的术语"里，newTerm 用不超过 18 字解释它；否则留空。
+6. 语气轻松，像朋友在旁边指点，不说"非常好""加油"这类空话。`;
 }
 
 function moveFactsText(cardObj) {
-  const c = cardObj.color, a = cardObj.cls, L = LABEL();
+  const c = cardObj.color, a = cardObj.cls;
   const lines = [`第 ${cardObj.moveNo} 手：${WHO(c)}（${c === B ? "黑" : "白"}）下在 ${cardObj.pos}`];
-  lines.push(...cardObj.local);
+  if (cardObj.where) lines.push(`位置：${cardObj.where}`);
+  if (cardObj.autoTerm) lines.push(`招式名（程序按棋形算出，直接用）：${cardObj.autoTerm}`);
+  if (cardObj.rel && cardObj.rel.length) lines.push(`棋形关系：${cardObj.rel.join("；")}`);
+  lines.push(...(cardObj.local || []));
   if (a) {
     const t = TIERS[a.tier];
-    lines.push(`引擎判定：${t.name || "普通的一手"}；这手${a.lossPts >= 0 ? "亏了" : "赚了"}约 ${Math.abs(a.lossPts).toFixed(1)} 目`);
-    lines.push(`${WHO(c)}胜率 ${Math.round(a.myWrBefore * 100)}% → ${Math.round(a.myWrAfter * 100)}%`);
-    if (a.idx !== 0 && a.best) lines.push(`引擎认为这里最好下 ${a.best}（主变化 ${a.bestPv.slice(0, 5).join(" ")}）——不要把这个坐标直接告诉学生`);
-    if (a.humanProb != null) lines.push(`${rankName(st.rank)}的人大约有 ${(a.humanProb * 100).toFixed(1)}% 会下在这里`);
+    lines.push(`引擎评价：${t.name || "普通的一手"}；${a.lossPts >= 0.05 ? "亏了约 " + a.lossPts.toFixed(1) + " 目" : a.lossPts <= -0.05 ? "赚了约 " + (-a.lossPts).toFixed(1) + " 目" : "几乎不亏"}`);
+    lines.push(`${WHO(c)}的胜率：${Math.round(a.myWrBefore * 100)}% → ${Math.round(a.myWrAfter * 100)}%`);
+    if (a.idx !== 0 && a.best && a.best !== "pass") {
+      const bp = go.parse(a.best);
+      lines.push(`引擎认为更好的是 ${a.best}（${bp >= 0 ? go.where(bp).text : ""}），后续 ${a.bestPv.slice(0, 5).join(" ")}。只能用来解释"为什么亏"，不要把坐标说出来`);
+    }
+    if (a.humanProb != null) lines.push(`${rankName(st.rank)}的人约 ${(a.humanProb * 100).toFixed(0)}% 会下这里`);
   }
+  if (cardObj.plan && cardObj.plan.length) lines.push(`这手之后引擎预计的后续：${cardObj.plan.join(" ")}（可用来说"我的打算"）`);
   return lines.join("\n");
 }
 
@@ -247,7 +259,7 @@ async function teach(cardList) {
   if (!cfg.key) { cardList.forEach(fallbackText); render(); return; }
   const terms = Object.keys(store.get("terms", {}));
   const user = `棋盘（x=黑 o=白，大写为最后一手）：\n${go.boardText(st.board, st.last)}
-棋谱（最近）：${recentRecord() || "无"}${st.hcpStones.length ? `\n让子：黑先摆 ${st.hcpStones.join(" ")}` : ""}
+${(() => { const l = go.stoneList(st.board); return `黑子：${l.b.join(" ") || "无"}\n白子：${l.w.join(" ") || "无"}`; })()}\n棋谱（最近）：${recentRecord() || "无"}${st.hcpStones.length ? `\n让子：黑先摆 ${st.hcpStones.join(" ")}` : ""}
 学生已学过的术语：${terms.join("、") || "无"}
 
 要写招式卡的棋：
@@ -259,7 +271,7 @@ hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个�
     const out = parseLoose(await callLLM([{ role: "system", content: sysPrompt() }, { role: "user", content: user }], true));
     (out.cards || []).forEach((oc, i) => {
       const c = cardList[i]; if (!c) return;
-      c.term = clean(oc.term).slice(0, 6) || "落子";
+      c.term = c.autoTerm || clean(oc.term).slice(0, 6) || "落子";
       c.reason = clean(oc.reason); c.effect = clean(oc.effect); c.advice = clean(oc.advice);
       const known = !!store.get("terms", {})[c.term];
       c.newTermFlag = !known && c.term !== "落子";
@@ -280,7 +292,7 @@ const clean = s => String(s || "").replace(/[黑白]棋/g, m => st.mode === "ai"
 
 function fallbackText(c) {
   c.done = true;
-  if (!c.term) c.term = "落子";
+  if (!c.term) c.term = c.autoTerm || "落子";
   const a = c.cls;
   if (a) {
     const t = TIERS[a.tier];
@@ -445,14 +457,14 @@ function renderCards() {
 
 function renderStatus() {
   const lv = rankName(st.rank);
-  $("modeLine").textContent = st.mode === "ai" ? `${st.N} 路 · 人机 · 对手 ${lv}${st.hcp ? ` · 让 ${st.hcp} 子` : ""}` : `${st.N} 路 · 双人对局${st.hcp ? ` · 让 ${st.hcp} 子` : ""}`;
+  $("modeLine").textContent = `${st.N}路·${st.mode === "ai" ? lv.replace(" ", "") : "双人"}${st.hcp ? "·让" + st.hcp : ""}`;
   let s;
   if (st.over) s = "已终局";
   else if (st.viewBoard) s = "老师在讲解…";
   else if (busy) s = "老师在想…";
-  else if (st.mode === "ai") s = st.toMove === B ? "轮到你（黑）" : "老师（白）";
+  else if (st.mode === "ai") s = st.toMove === B ? "轮到你" : "老师在想…";
   else s = st.toMove === B ? "轮到黑方" : "轮到白方";
-  $("status").textContent = `${s} · 提子 黑${st.caps[1]} 白${st.caps[2]}`;
+  $("status").textContent = `${s} · 提${st.caps[1]}:${st.caps[2]}`;
   $("btnUndo").disabled = busy || !st.snaps.length;
   $("btnPass").disabled = busy || st.over;
   $("btnResign").disabled = busy || st.over;
@@ -469,11 +481,19 @@ function renderEval() {
 function render() { renderBoard(); renderCards(); renderStatus(); renderEval(); }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-function makeCard(color, p, local) {
-  return { id: ++cardSeq, color, p, pos: go.name(p), moveNo: st.seq.length, local, cls: null, done: false, fresh: true, term: "" };
+// 程序算出的这一手的事实：局部战斗、位置、形状和招式名
+function factsFor(r, p, color) {
+  const sh = go.shape(r.before, st.board, p, color, r.captured || []);
+  return {
+    local: go.localFacts(r.before, st.board, p, color, r.captured || [], LABEL()),
+    autoTerm: sh.term, rel: sh.rel, where: p >= 0 ? go.where(p).text : ""
+  };
 }
-function newCard(color, p, local) {
-  const c = { id: ++cardSeq, color, p, pos: go.name(p), moveNo: st.seq.length, local, cls: null, done: false, fresh: true, term: "" };
+function makeCard(color, p, f) {
+  return Object.assign({ id: ++cardSeq, color, p, pos: go.name(p), moveNo: st.seq.length, cls: null, done: false, fresh: true, term: "" }, f);
+}
+function newCard(color, p, f) {
+  const c = makeCard(color, p, f);
   cards.unshift(c);
   if (cards.length > 30) cards.length = 30;
   return c;
@@ -495,7 +515,7 @@ async function onPoint(p) {
   if (!r.ok) { showMsg(r.why); return; }
   setHints([]);
   const e = epoch;
-  const card = newCard(color, p, go.localFacts(r.before, st.board, p, color, r.captured, LABEL()));
+  const card = newCard(color, p, factsFor(r, p, color));
   if (st.passes >= 2) { render(); return finishGame("两人都停了一手"); }
   if (st.mode === "ai") { busy = true; render(); await aiReply(card, e); }
   else { render(); saveGame(); await reviewMove(card, e); }
@@ -544,7 +564,7 @@ async function aiReply(myCard, e) {
   const r = apply(W, p);
   if (!r.ok) { busy = false; render(); return; }
   // 先讲完你这一手，再把老师的子放到棋盘上：落子已经算好，但暂时不显示
-  const aiCard = makeCard(W, p, go.localFacts(r.before, st.board, p, W, r.captured, LABEL()));
+  const aiCard = makeCard(W, p, factsFor(r, p, W));
   st.viewBoard = r.before; st.viewLast = myCard.p;
   render();
 
@@ -553,6 +573,7 @@ async function aiReply(myCard, e) {
     aiAfter = await analyzePos(st.seq.slice());
     if (e !== epoch) return;
     if (p >= 0) aiCard.cls = classify(after, aiAfter, p, W);
+    if (aiAfter.moves[0]) aiCard.plan = aiAfter.moves[0].pv.slice(0, 4);
   } catch (err) { /* 引擎慢或出错：仍然让老师讲 */ }
   if (e !== epoch) return;
 
@@ -582,7 +603,7 @@ async function aiFirst() {
     if (e !== epoch) return;
     const p = sampleHuman(a);
     const r = apply(W, p);
-    const card = newCard(W, p, go.localFacts(r.before, st.board, p, W, r.captured, LABEL()));
+    const card = newCard(W, p, factsFor(r, p, W));
     busy = false; render();
     const a2 = await analyzePos(st.seq.slice());
     setEval(a2);
