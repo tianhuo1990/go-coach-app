@@ -27,6 +27,22 @@ if [ ! -d katago ]; then
   git clone --depth 1 --branch "$KATAGO_VERSION" https://github.com/lightvector/KataGo.git katago
 fi
 
+# 1b) 手机显卡没有"张量核心"，KataGo 却总会测试 hGemmWmma，华为 Maleoon 的驱动编译这段代码会卡死。
+#     直接让这两项测试返回"不可用"。
+python3 - "$WORK/katago/cpp/neuralnet/opencltuner.cpp" <<'PYEOF'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+if "GOCOACH_NO_WMMA" not in s:
+    n = 0
+    for name in ("tuneHGemmWmma(", "tuneHGemmWmmaNCHW("):
+        i = s.index("static bool " + name)
+        j = s.index(") {", i) + 3
+        s = s[:j] + "\n  if(true) return false; // GOCOACH_NO_WMMA\n" + s[j:]
+        n += 1
+    open(p, "w").write(s)
+    print("已跳过张量核心测试：", n, "处")
+PYEOF
+
 # 2) Eigen（只需要头文件）
 if [ ! -d eigen ]; then
   curl -fL --retry 3 -o eigen.tar.gz https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz

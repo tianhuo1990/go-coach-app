@@ -273,7 +273,7 @@ public class Engine {
         new Thread(() -> readStdout(p, gen), "engine-stdout").start();
 
         synchronized (readyLock) {
-            long deadline = System.currentTimeMillis() + (gpu ? 20 * 60_000L : 5 * 60_000L);
+            long deadline = System.currentTimeMillis() + (gpu ? 12 * 60_000L : 5 * 60_000L);
             while (!result[0] && System.currentTimeMillis() < deadline) {
                 try { readyLock.wait(1000); } catch (InterruptedException ignored) {}
                 if (!p.isAlive()) break;
