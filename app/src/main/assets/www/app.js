@@ -7,7 +7,7 @@ const store = {
 };
 
 // ---------- 配置 ----------
-const DEF = { base: "http://121.37.208.141:8317/v1", key: "", model: "deepseek-v4.1-flash" };   // Key 不写进代码，在 App 菜单里填
+const DEF = { base: "https://api.deepseek.com", key: "", model: "deepseek-v4.1-flash" };   // Key 不写进代码，在 App 菜单里填
 const cfg = Object.assign({ mode: "ai", size: 9, hcp: 0, visits: 60, tts: false, levelMode: "auto" }, DEF, store.get("cfg", {}));
 for (const k of ["base", "model"]) if (!cfg[k]) cfg[k] = DEF[k];
 const saveCfg = () => store.set("cfg", cfg);
