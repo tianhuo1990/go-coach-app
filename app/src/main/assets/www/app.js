@@ -265,8 +265,7 @@ ${(() => { const l = go.stoneList(st.board); return `黑子：${l.b.join(" ") ||
 要写招式卡的棋：
 ${cardList.map((c, i) => `【卡${i + 1}】\n${moveFactsText(c)}`).join("\n\n")}
 
-返回 JSON：{"cards":[{"term":"","newTerm":"","reason":"","effect":"","advice":""}，按卡的顺序，共 ${cardList.length} 张],"hints":[{"pos":"坐标","color":"B或W","n":1}]}
-hints 的 n 是演示顺序，从 1 开始；hints 是建议里想在棋盘上用半透明棋子演示的点，最多 3 个，可以为空数组。`;
+返回 JSON：{"cards":[{"term":"","newTerm":"","reason":"","effect":"","advice":""}，按卡的顺序，共 ${cardList.length} 张]}`;
   try {
     const out = parseLoose(await callLLM([{ role: "system", content: sysPrompt() }, { role: "user", content: user }], true));
     (out.cards || []).forEach((oc, i) => {
@@ -279,7 +278,7 @@ hints 的 n 是演示顺序，从 1 开始；hints 是建议里想在棋盘上�
       c.done = true;
     });
     cardList.forEach(c => { if (!c.done) fallbackText(c); });
-    if (e === epoch) { const hs = normHints(out.hints, 3); if (hs.length) setHints(hs); }
+    // 招式卡不再让模型自己画演示棋子（容易乱画），正解统一用"看正解"按钮
   } catch (err) {
     cardList.forEach(c => { fallbackText(c); c.netErr = err.message; });
   }
@@ -715,25 +714,78 @@ async function ask(q, focusCard) {
   $("chat").hidden = false;
   addMsg("u", q);
   if (!cfg.key) { addMsg("a", "还没填老师的接口 Key，在菜单里设置。"); return; }
-  const ctx = `棋盘（x=黑 o=白，大写为最后一手）：\n${go.boardText(st.board, st.last)}\n棋谱（最近）：${recentRecord()}\n老师最近说过：${st.notes.join("；")}`
-    + (focusCard ? `\n学生问的是这一手：\n${moveFactsText(focusCard)}` : "");
-  const sys = sysPrompt() + `\n现在学生在提问。返回 JSON：{"text":"回答","hints":[{"pos":"坐标","color":"B或W","n":序号}]}。
-text 用大白话，150 字以内，可以讲具体变化（这时可以说出坐标），讲变化时把每一步放进 hints（最多 6 步，n 从 1 开始按顺序编号），棋盘会用半透明棋子演示。`;
+  const thinkEl = addMsg("a", "老师在看棋…");
+
+  // 先让引擎分析当前局面：老师只能从这些候选点里推荐，不许自己编坐标
+  let cand = [];
   try {
-    const out = parseLoose(await callLLM([{ role: "system", content: sys }, ...chatLog.slice(-6), { role: "user", content: ctx + "\n\n学生问：" + q + "\n（记得按 JSON 格式回答）" }], true));
-    const text = clean(out.text || out.answer || out.reply || "");
+    const a = await analyzePos(st.seq.slice());
+    const side = st.toMove;
+    cand = a.moves.filter(m => m.move !== "pass" && m.visits >= 2).slice(0, 5).map(m => ({
+      move: m.move, pv: m.pv.slice(0, 6),
+      wr: side === B ? m.wr : 1 - m.wr, lead: side === B ? m.lead : -m.lead
+    }));
+  } catch (e) { /* 引擎不可用：只讲道理，不给坐标 */ }
+  const sideName = st.mode === "ai" ? (st.toMove === B ? "你（黑）" : "我（白）") : (st.toMove === B ? "黑方" : "白方");
+  const candText = cand.length
+    ? cand.map((c, i) => `${i + 1}. ${c.move}（${go.where(go.parse(c.move)).text}）：下这里后${sideName}胜率 ${Math.round(c.wr * 100)}%，后续 ${c.pv.join(" ")}`).join("\n")
+    : "（引擎暂时不可用，不要推荐任何坐标）";
+  const stones = go.stoneList(st.board);
+  const ctx = `盘面：黑子 ${stones.b.join(" ") || "无"}；白子 ${stones.w.join(" ") || "无"}
+现在轮到：${sideName}
+棋谱（最近）：${recentRecord() || "无"}
+【引擎候选】（按好坏排序，第 1 个最好）：
+${candText}`
+    + (focusCard ? `\n学生问的是这一手：\n${moveFactsText(focusCard)}` : "");
+  const sys = sysPrompt() + `
+现在学生在提问。回答规则：
+1. 想推荐下在哪里，只能从【引擎候选】里选；讲变化只能用候选后面写的"后续"。绝对不要自己编坐标。
+2. 不知道的就说不确定。一线（最边上）的点在开局几乎从来不是好棋，不要推荐。
+3. 用大白话，120 字以内，先说结论再说理由。
+返回 JSON：{"text":"回答","show":"想在棋盘上演示的候选坐标，必须是候选之一；不演示就留空"}`;
+
+  const allowed = new Set(cand.flatMap(c => [c.move, ...c.pv]));
+  const badCoords = t => (String(t).match(/\b[A-HJ-T](?:1[0-9]|[1-9])\b/g) || [])
+    .filter(m => { const p = go.parse(m); return p != null && p >= 0 && st.board[p] === EMPTY && !allowed.has(m); });
+
+  try {
+    const msgs = [{ role: "system", content: sys }, ...chatLog.slice(-6), { role: "user", content: ctx + "\n\n学生问：" + q + "\n（按 JSON 格式回答）" }];
+    let out = parseLoose(await callLLM(msgs, true));
+    let bad = badCoords(out.text || "");
+    if (bad.length) {
+      // 说了候选以外的空点：要求它重答一次
+      msgs.push({ role: "assistant", content: JSON.stringify(out) }, { role: "user", content: `你提到的 ${bad.join("、")} 不在引擎候选里，可能是坏棋。请只用【引擎候选】重新回答。` });
+      out = parseLoose(await callLLM(msgs, true));
+      bad = badCoords(out.text || "");
+    }
+    let text = clean(out.text || out.answer || out.reply || "");
     if (!text) throw new Error("老师没有回答内容");
-    chatLog.push({ role: "user", content: q }, { role: "assistant", content: JSON.stringify({ text, hints: [] }) });
+    if (bad.length) text += `\n（注意：${bad.join("、")} 不是引擎推荐的点，别当真）`;
+    chatLog.push({ role: "user", content: q }, { role: "assistant", content: JSON.stringify({ text, show: "" }) });
+    thinkEl.remove();
     addMsg("a", text);
-    const hs = normHints(out.hints, 6);
-    if (hs.length) setHints(hs);
+    // 棋盘演示由程序按引擎变化来画：颜色、顺序都准确
+    const pick = cand.find(c => c.move === String(out.show || "").trim().toUpperCase()) || (cand.length && /哪|怎么|下在|该|抢|应该/.test(q) ? cand[0] : null);
+    if (pick) showPv(pick.pv, st.toMove);
     speak(text);
-  } catch (err) { addMsg("a", "老师连不上：" + err.message); }
+  } catch (err) { thinkEl.remove(); addMsg("a", "老师连不上：" + err.message); }
+}
+
+// 在棋盘上用半透明棋子演示一串变化（从 color 开始轮流）
+function showPv(pv, color) {
+  const hs = []; let col = color;
+  for (const m of pv.slice(0, 6)) {
+    const p = go.parse(m);
+    if (p != null && p >= 0 && st.board[p] === EMPTY && !hs.some(h => h.p === p)) hs.push({ p, c: col, n: hs.length + 1 });
+    col = opp(col);
+  }
+  setHints(hs);
 }
 function addMsg(who, t) {
   const d = document.createElement("div"); d.className = "m " + who;
   d.innerHTML = who === "a" ? linkCoords(t) : esc(t);
   $("msgs").appendChild(d); $("msgs").scrollTop = 1e9;
+  return d;
 }
 
 // ---------- 菜单 ----------
